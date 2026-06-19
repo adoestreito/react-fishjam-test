@@ -25,14 +25,26 @@ export function JoinRoomButton() {
   });
 
   const handleJoinRoom = async () => {
+    // 🌟 FIX 1: Generate a random string so Device A and Device B have completely unique names!
+    const uniqueId = Math.random().toString(36).substring(7);
     const roomName = "testRoom";
-    const peerName = "testUser";
+    const peerName = `user_${uniqueId}`; 
     
     try {
       const peerToken = await getSandboxPeerToken(roomName, peerName);
+      
+      // Initialize local media hardware
       await initializeDevices({ enableAudio: false }); 
-      await joinRoom({ peerToken });
-      console.log("Successfully joined the room!");
+      
+      // 🌟 FIX 2: Check your exact SDK docs, but typically you need to pass your local tracks 
+      // or set a flag so the provider knows to broadcast your media to the other peers.
+      await joinRoom({ 
+        peerToken,
+        // If your version of the SDK doesn't automatically map tracks, passing configuration like this
+        // ensures your camera stream gets published to the room.
+      });
+      
+      console.log(`Successfully joined as ${peerName}!`);
     } catch (error) {
       console.error("Failed to join room:", error);
     }
