@@ -292,7 +292,7 @@ export function MyVideo() {
   );
 }
 
-// 8. ParticipantsView Component
+// 8. ParticipantsView Component (Updated for latest Fishjam Spec)
 export function ParticipantsView() {
   const { remotePeers } = usePeers();
 
@@ -301,14 +301,28 @@ export function ParticipantsView() {
       <MyVideo />
 
       <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '15px' }}>
-        {remotePeers.map((peer) => (
-          <div key={peer.id} style={{ border: '1px solid #ccc', padding: '10px', borderRadius: '10px' }}>
-            <p style={{ margin: '0 0 5px 0', fontSize: '14px' }}>{peer.name || "Remote Peer"}</p>
-            {peer.cameraTrack?.stream && (
-              <VideoPlayer stream={peer.cameraTrack.stream} />
-            )}
-          </div>
-        ))}
+        {remotePeers.map((peer) => {
+          // 🌟 SDK FIX: Extract the stream safely. 
+          // Depending on the exact minor version revision, the stream is either the track itself
+          // or is attached directly to cameraTrack.
+          const remoteStream = peer.cameraTrack?.stream || peer.cameraTrack;
+
+          return (
+            <div key={peer.id} style={{ border: '1px solid #ccc', padding: '10px', borderRadius: '10px', backgroundColor: '#222' }}>
+              <p style={{ margin: '0 0 5px 0', fontSize: '14px', color: '#fff' }}>
+                {peer.name || "Remote Peer"}
+              </p>
+              
+              {remoteStream ? (
+                <VideoPlayer stream={remoteStream} />
+              ) : (
+                <div style={{ width: '300px', height: '225px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#111', borderRadius: '8px', fontSize: '12px', color: '#666' }}>
+                  Camera hidden or loading...
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
