@@ -16,53 +16,135 @@ import {
 
 const SANDBOX_API_URL = import.meta.env.VITE_SANDBOX_API_URL;
 
-// 2. Official Fishjam Custom Chat Hook (Converted from TypeScript to clean JS)
-export function useChat() {
-  const { peerStatus } = useConnection();
-  const {
-    initializeDataChannel,
-    publishData,
-    subscribeData,
-    dataChannelReady,
-  } = useDataChannel();
-  
-  const [messages, setMessages] = useState([]);
+export function GameController() {
+  const [activeEffects, setActiveEffects] = useState([]);
 
-  // Step 1: Initialize data channel when connected
+  // Handle incoming actions from other players
+  const handleIncomingAction = useCallback((payload) => {
+    if (payload.type === "SPAWN_EMOTE") {
+      const newEffect = {
+        id: Math.random(),
+        emoji: payload.emoji,
+        sender: payload.senderName
+      };
+      
+      setActiveEffects((prev) => [...prev, newEffect]);
+
+      // Remove the effect after 2 seconds once the animation finishes
+      setTimeout(() => {
+        setActiveEffects((prev) => prev.filter(e => e.id !== newEffect.id));
+      }, 2000);
+    }
+  }, []);
+
+  const { sendAction, ready } = useGameSync(handleIncomingAction);
+
+  const triggerEmote = (emoji) => {
+    if (!ready) return;
+
+    const payload = {
+      type: "SPAWN_EMOTE",
+      emoji: emoji,
+      senderName: "A Peer"
+    };
+
+    // 1. Send it over the ultra-fast data lane to everyone else
+    sendAction(payload);
+
+    // 2. Display it on our own screen immediately too
+    handleIncomingAction({ ...payload, senderName: "You" });
+  };
+
+  return (
+    <div style={{ marginTop: "20px", textAlign: "center" }}>
+      <h3 style={{ margin: "0 0 10px 0", fontSize: "16px" }}>
+        Interactive Emote Sync {ready ? "🟢" : "🔴"}
+      </h3>
+      
+      {/* Interactive Action Buttons */}
+      <div style={{ display: "flex", gap: "10px", justifyContent: "center" }}>
+        <button type="button" onClick={() => triggerEmote("🚀")} disabled={!ready} style={{ fontSize: "24px", padding: "10px" }}>🚀</button>
+        <button type="button" onClick={() => triggerEmote("💥")} disabled={!ready} style={{ fontSize: "24px", padding: "10px" }}>💥</button>
+        <button type="button" onClick={() => triggerEmote("🎉")} disabled={!ready} style={{ fontSize: "24px", padding: "10px" }}>🎉</button>
+        <button type="button" onClick={() => triggerEmote("👻")} disabled={!ready} style={{ fontSize: "24px", padding: "10px" }}>👻</button>
+      </div>
+
+      {/* Floating Canvas Overlay Zone */}
+      <div style={{
+        position: "fixed",
+        top: "20%",
+        left: "50%",
+        transform: "translateX(-50%)",
+        pointerEvents: "none", // Allows clicks to pass through
+        zIndex: 9999,
+        display: "flex",
+        flexDirection: "column",
+        gap: "10px"
+      }}>
+        {activeEffects.map((effect) => (
+          <div 
+            key={effect.id} 
+            className="floating-emote"
+            style={{
+              fontSize: "48px",
+              animation: "floatUpAndFade 2s ease-out forwards",
+              background: "rgba(0,0,0,0.6)",
+              padding: "10px 20px",
+              borderRadius: "50px",
+              textAlign: "center"
+            }}
+          >
+            {effect.emoji}
+            <span style={{ display: "block", fontSize: "10px", color: "#aaa" }}>{effect.sender}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function useGameSync(onActionReceived) {
+  const { peerStatus } = useConnection();
+  const { initializeDataChannel, publishData, subscribeData, dataChannelReady } = useDataChannel();
+
+  // Initialize channel when connected
   useEffect(() => {
     if (peerStatus === "connected" && typeof initializeDataChannel === 'function') {
       initializeDataChannel();
     }
   }, [peerStatus, initializeDataChannel]);
 
-  // Step 2: Subscribe to incoming messages
+  // Subscribe and parse JSON payloads
   useEffect(() => {
     if (!dataChannelReady || typeof subscribeData !== 'function') return;
     
     const unsubscribe = subscribeData(
       (data) => {
-        const message = new TextDecoder().decode(data);
-        setMessages((prev) => [...prev, { sender: "Remote", text: message }]);
+        try {
+          const decodedString = new TextDecoder().decode(data);
+          const payload = JSON.parse(decodedString); // <-- Parse incoming JSON
+          onActionReceived(payload);
+        } catch (e) {
+          console.error("Failed to parse game payload", e);
+        }
       },
-      { reliable: true },
+      { reliable: false }, // 'false' switches to UDP mode—much faster for real-time actions!
     );
     return unsubscribe;
-  }, [subscribeData, dataChannelReady]);
+  }, [subscribeData, dataChannelReady, onActionReceived]);
 
-  // Step 3: Publish messages
-  const sendMessage = useCallback(
-    (text) => {
+  // Broadcast game actions
+  const sendAction = useCallback(
+    (actionObject) => {
       if (!dataChannelReady || typeof publishData !== 'function') return;
-      const encoded = new TextEncoder().encode(text);
-      publishData(encoded, { reliable: true });
-      
-      // Also save your own message locally so you can see it in your log
-      setMessages((prev) => [...prev, { sender: "You", text: text }]);
+      const stringified = JSON.stringify(actionObject);
+      const encoded = new TextEncoder().encode(stringified);
+      publishData(encoded, { reliable: false });
     },
     [publishData, dataChannelReady],
   );
 
-  return { messages, sendMessage, ready: dataChannelReady };
+  return { sendAction, ready: dataChannelReady };
 }
 
 // 3. Updated P2P Interaction Component wired directly to useChat
@@ -241,9 +323,10 @@ function App() {
           <JoinRoomButton />
           <ConnectionStatus />
           <ParticipantsView />
+          <GameController />
           
           {/* Renders safely; status flags inside hook manage state internally */}
-          <InteractionChannel />
+          
         </div>
       </section>
       <div className="ticks"></div>
