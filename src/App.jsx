@@ -1,59 +1,86 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import reactLogo from './assets/react.svg'
 import viteLogo from './assets/vite.svg'
 import heroImg from './assets/hero.png'
 import './App.css'
 
-// 1. ALL SDK IMPORTS TOGETHER AT THE VERY TOP
+// 1. Unified Fishjam SDK Imports
 import {
   useConnection,
   useCamera, 
   useInitializeDevices,
   useSandbox,
   usePeers,
-  useDataChannel // <-- Handles P2P Messaging lanes
+  useDataChannel 
 } from "@fishjam-cloud/react-client";
 
-// Your secret Sandbox URL from the environment
 const SANDBOX_API_URL = import.meta.env.VITE_SANDBOX_API_URL;
 
-// 2. The P2P Data Channel Interaction Component
-export function InteractionChannel() {
-  const [message, setMessage] = useState("");
-  const [logs, setLogs] = useState([]);
+// 2. Official Fishjam Custom Chat Hook (Converted from TypeScript to clean JS)
+export function useChat() {
+  const { peerStatus } = useConnection();
+  const {
+    initializeDataChannel,
+    publishData,
+    subscribeData,
+    dataChannelReady,
+  } = useDataChannel();
+  
+  const [messages, setMessages] = useState([]);
 
-  // 🌟 FIX: Extract 'broadcast' instead of 'sendMessage'
-  const { broadcast, onMessage } = useDataChannel();
-
+  // Step 1: Initialize data channel when connected
   useEffect(() => {
-    if (typeof onMessage !== 'function') return;
-
-    const unsubscribe = onMessage((data, peerId) => {
-      const sender = peerId ? peerId.substring(0, 5) : "Peer";
-      setLogs((prev) => [...prev, `From ${sender}: ${data}`]);
-    });
-
-    return () => {
-      if (typeof unsubscribe === 'function') unsubscribe();
-    };
-  }, [onMessage]);
-
-  const handleBroadcast = () => {
-    if (!message.trim()) return;
-
-    // 🌟 FIX: Check if broadcast function exists, then invoke it
-    if (typeof broadcast === 'function') {
-      broadcast(message);
-      setLogs((prev) => [...prev, `You (Broadcast): ${message}`]);
-      setMessage("");
-    } else {
-      console.error("Fishjam broadcast function is not available. Are you connected to the room?");
+    if (peerStatus === "connected" && typeof initializeDataChannel === 'function') {
+      initializeDataChannel();
     }
+  }, [peerStatus, initializeDataChannel]);
+
+  // Step 2: Subscribe to incoming messages
+  useEffect(() => {
+    if (!dataChannelReady || typeof subscribeData !== 'function') return;
+    
+    const unsubscribe = subscribeData(
+      (data) => {
+        const message = new TextDecoder().decode(data);
+        setMessages((prev) => [...prev, { sender: "Remote", text: message }]);
+      },
+      { reliable: true },
+    );
+    return unsubscribe;
+  }, [subscribeData, dataChannelReady]);
+
+  // Step 3: Publish messages
+  const sendMessage = useCallback(
+    (text) => {
+      if (!dataChannelReady || typeof publishData !== 'function') return;
+      const encoded = new TextEncoder().encode(text);
+      publishData(encoded, { reliable: true });
+      
+      // Also save your own message locally so you can see it in your log
+      setMessages((prev) => [...prev, { sender: "You", text: text }]);
+    },
+    [publishData, dataChannelReady],
+  );
+
+  return { messages, sendMessage, ready: dataChannelReady };
+}
+
+// 3. Updated P2P Interaction Component wired directly to useChat
+export function InteractionChannel() {
+  const [inputText, setInputText] = useState("");
+  
+  // Connect this component straight to your newly added hook!
+  const { messages, sendMessage, ready } = useChat();
+
+  const handleSend = () => {
+    if (!inputText.trim()) return;
+    sendMessage(inputText);
+    setInputText("");
   };
 
   return (
     <div style={{
-      border: "1px dashed #646cff",
+      border: ready ? "1px solid #4caf50" : "1px dashed #646cff",
       padding: "15px",
       borderRadius: "8px",
       marginTop: "15px",
@@ -61,23 +88,34 @@ export function InteractionChannel() {
       width: "300px",
       textAlign: "left"
     }}>
-      <h3 style={{ margin: "0 0 10px 0", fontSize: "16px" }}>P2P Data Channel</h3>
+      <h3 style={{ margin: "0 0 5px 0", fontSize: "16px" }}>
+        P2P Data Channel {ready ? "🟢" : "🔴"}
+      </h3>
+      <p style={{ margin: "0 0 10px 0", fontSize: "11px", color: "#aaa" }}>
+        {ready ? "Channel initialized & verified" : "Waiting for room connection..."}
+      </p>
       
-      {/* Scrollable log box */}
+      {/* Scrollable log box displaying the active message stream */}
       <div style={{
-        height: "100px",
+        height: "110px",
         overflowY: "auto",
         backgroundColor: "#1a1a1a",
-        padding: "5px",
+        padding: "8px",
         borderRadius: "4px",
         fontSize: "12px",
         marginBottom: "10px",
         color: "#ccc"
       }}>
-        {logs.length === 0 ? (
-          <span style={{color: '#666'}}>No P2P events yet...</span>
+        {messages.length === 0 ? (
+          <span style={{color: '#666'}}>No messages yet.</span>
         ) : (
-          logs.map((log, i) => <div key={i}>{log}</div>)
+          messages.map((msg, i) => (
+            <div key={i} style={{ marginBottom: '4px' }}>
+              <strong style={{ color: msg.sender === 'You' ? '#646cff' : '#4caf50' }}>
+                {msg.sender}: 
+              </strong> {msg.text}
+            </div>
+          ))
         )}
       </div>
 
@@ -85,12 +123,13 @@ export function InteractionChannel() {
       <div style={{ display: "flex", gap: "5px" }}>
         <input 
           type="text" 
-          value={message} 
-          onChange={(e) => setMessage(e.target.value)} 
-          placeholder="Send real-time payload..."
-          style={{ flex: 1, padding: "5px", borderRadius: "4px", border: "1px solid #444", background: "#111", color: "#fff" }}
+          value={inputText} 
+          disabled={!ready}
+          onChange={(e) => setInputText(e.target.value)} 
+          placeholder={ready ? "Type a chat message..." : "Channel offline..."}
+          style={{ flex: 1, padding: "5px", borderRadius: "4px", border: "1px solid #444", background: "#111", color: "#fff", opacity: ready ? 1 : 0.5 }}
         />
-        <button type="button" onClick={handleBroadcast} style={{ padding: "5px 10px", fontSize: "12px" }}>
+        <button type="button" onClick={handleSend} disabled={!ready} style={{ padding: "5px 10px", fontSize: "12px", opacity: ready ? 1 : 0.5 }}>
           Send
         </button>
       </div>
@@ -98,7 +137,7 @@ export function InteractionChannel() {
   );
 }
 
-// 3. The Fishjam Button Component
+// 4. The Fishjam Button Component
 export function JoinRoomButton() {
   const { joinRoom } = useConnection();
   const { initializeDevices } = useInitializeDevices();
@@ -128,7 +167,7 @@ export function JoinRoomButton() {
   );
 }
 
-// 4. Connection Status Component
+// 5. Connection Status Component
 export function ConnectionStatus() {
   const { peerStatus } = useConnection();
   
@@ -145,7 +184,7 @@ export function ConnectionStatus() {
   );
 }
 
-// 5. Reusable VideoPlayer Component 
+// 6. Reusable VideoPlayer Component 
 function VideoPlayer({ stream }) {
   const videoRef = useRef(null);
 
@@ -157,7 +196,7 @@ function VideoPlayer({ stream }) {
   return <video ref={videoRef} autoPlay playsInline style={{ width: '300px', borderRadius: '8px', margin: '10px', transform: 'scaleX(-1)' }} />;
 }
 
-// 6. Local Video Component
+// 7. Local Video Component
 export function MyVideo() {
   const { cameraStream } = useCamera();
   
@@ -171,7 +210,7 @@ export function MyVideo() {
   );
 }
 
-// 7. ParticipantsView Component
+// 8. ParticipantsView Component
 export function ParticipantsView() {
   const { remotePeers } = usePeers();
 
@@ -193,7 +232,7 @@ export function ParticipantsView() {
   );
 }
 
-// 8. Main App Component
+// 9. Main App Component
 function App() {
   return (
     <>
@@ -202,6 +241,8 @@ function App() {
           <JoinRoomButton />
           <ConnectionStatus />
           <ParticipantsView />
+          
+          {/* Renders safely; status flags inside hook manage state internally */}
           <InteractionChannel />
         </div>
       </section>
