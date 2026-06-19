@@ -11,7 +11,7 @@ import {
   useInitializeDevices,
   useSandbox,
   usePeers,
-  useDataChannel // <-- Added for P2P Messaging
+  useDataChannel // <-- Handles P2P Messaging
 } from "@fishjam-cloud/react-client";
 
 // Remember to replace this with your actual URL from the Fishjam dashboard!
@@ -96,42 +96,20 @@ export function MyVideo() {
   );
 }
 
-// 6. ParticipantsView Component (KEPT EXACTLY AS YOUR WORKING VERSION)
-export function ParticipantsView() {
-  const { remotePeers } = usePeers();
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px', width: '100%', margin: '20px 0' }}>
-      <MyVideo />
-
-      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '15px' }}>
-        {remotePeers.map((peer) => (
-          <div key={peer.id} style={{ border: '1px solid #ccc', padding: '10px', borderRadius: '10px' }}>
-            <p style={{ margin: '0 0 5px 0', fontSize: '14px' }}>{peer.name || "Remote Peer"}</p>
-            {peer.cameraTrack?.stream && (
-              <VideoPlayer stream={peer.cameraTrack.stream} />
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// 7. Official Custom Chat/Game Hook adjusted for your App
+// 6. Integrated Custom Chat/Game Hook
 export function useChat(onEmoteReceived) {
   const { peerStatus } = useConnection();
   const { initializeDataChannel, publishData, subscribeData, dataChannelReady } = useDataChannel();
   const [messages, setMessages] = useState([]);
 
-  // Step 1: Initialize channel when connected
+  // Step 1: Initialize data channel cleanly upon room confirmation
   useEffect(() => {
     if (peerStatus === "connected" && typeof initializeDataChannel === 'function') {
       initializeDataChannel();
     }
   }, [peerStatus, initializeDataChannel]);
 
-  // Step 2: Subscribe to incoming payloads
+  // Step 2: Subscribe to incoming payloads securely
   useEffect(() => {
     if (!dataChannelReady || typeof subscribeData !== 'function') return;
     
@@ -147,7 +125,6 @@ export function useChat(onEmoteReceived) {
             setMessages((prev) => [...prev, { msg: payload.text, incoming: true }]);
           }
         } catch (e) {
-          // If it's old plain text format
           const text = new TextDecoder().decode(data);
           setMessages((prev) => [...prev, { msg: text, incoming: true }]);
         }
@@ -157,7 +134,7 @@ export function useChat(onEmoteReceived) {
     return unsubscribe;
   }, [subscribeData, dataChannelReady, onEmoteReceived]);
 
-  // Step 3: Broadcast functions
+  // Step 3: Global Action Transmitters
   const sendTextMessage = useCallback((text) => {
     if (!dataChannelReady) return;
     const payload = JSON.stringify({ type: "TEXT", text });
@@ -176,12 +153,12 @@ export function useChat(onEmoteReceived) {
   return { messages, sendTextMessage, sendEmote, ready: dataChannelReady };
 }
 
-// 8. Fun Interactive Features Panel (Chat + Emotes mixed)
-export function InteractivePanel() {
+// 7. Interactive Features Overlay Panel Component
+export function InteractivePanel({ chatTools }) {
   const [text, setText] = useState("");
   const [activeEmotes, setActiveEmotes] = useState([]);
+  const { messages, sendTextMessage, sendEmote, ready } = chatTools;
 
-  // Trigger floating emote display logic
   const handleLocalEmoteSpawn = useCallback((emoji, senderName) => {
     const id = Math.random();
     setActiveEmotes((prev) => [...prev, { id, emoji, senderName }]);
@@ -190,9 +167,11 @@ export function InteractivePanel() {
     }, 2000);
   }, []);
 
-  const { messages, sendTextMessage, sendEmote, ready } = useChat(
-    (emoji) => handleLocalEmoteSpawn(emoji, "Peer")
-  );
+  // Expose local display channel to the global window environment
+  useEffect(() => {
+    window._remoteEmoteTrigger = (emoji) => handleLocalEmoteSpawn(emoji, "Peer");
+    return () => delete window._remoteEmoteTrigger;
+  }, [handleLocalEmoteSpawn]);
 
   const triggerTextSubmit = () => {
     if (!text.trim()) return;
@@ -208,7 +187,7 @@ export function InteractivePanel() {
   return (
     <div style={{ marginTop: '15px', display: 'flex', flexDirection: 'column', gap: '15px', width: '320px', textAlign: 'left' }}>
       
-      {/* Emote Button Grid */}
+      {/* Emote Matrix Block */}
       <div style={{ background: '#242424', padding: '10px', borderRadius: '8px', border: ready ? '1px solid #4caf50' : '1px dashed #444', textAlign: 'center' }}>
         <p style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#aaa' }}>Live Action Channels {ready ? "🟢" : "🔴"}</p>
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
@@ -220,7 +199,7 @@ export function InteractivePanel() {
         </div>
       </div>
 
-      {/* Traditional Text Box Area */}
+      {/* Structured Core Message Log */}
       <div style={{ background: '#242424', padding: '15px', borderRadius: '8px', border: ready ? '1px solid #4caf50' : '1px dashed #444' }}>
         <div style={{ height: '100px', overflowY: 'auto', background: '#1a1a1a', padding: '6px', borderRadius: '4px', fontSize: '13px', marginBottom: '10px' }}>
           {messages.map((m, idx) => (
@@ -243,7 +222,7 @@ export function InteractivePanel() {
         </div>
       </div>
 
-      {/* Shared Absolute Floating Render Canvas */}
+      {/* Floating Canvas Overlay Element */}
       <div style={{ position: 'fixed', top: '30%', left: '50%', transform: 'translateX(-50%)', pointerEvents: 'none', zIndex: 99999, display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {activeEmotes.map((e) => (
           <div key={e.id} style={{ fontSize: '45px', background: 'rgba(0,0,0,0.7)', padding: '5px 20px', borderRadius: '30px', textAlign: 'center', animation: 'floatUpAndFade 2s ease-out forwards' }}>
@@ -256,18 +235,45 @@ export function InteractivePanel() {
   );
 }
 
+// 8. ParticipantsView Component (YOUR ORIGINAL PERFECTLY WORKING VERSION)
+export function ParticipantsView() {
+  const { remotePeers } = usePeers();
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px', width: '100%', margin: '20px 0' }}>
+      <MyVideo />
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '15px' }}>
+        {remotePeers.map((peer) => (
+          <div key={peer.id} style={{ border: '1px solid #ccc', padding: '10px', borderRadius: '10px' }}>
+            <p style={{ margin: '0 0 5px 0', fontSize: '14px' }}>{peer.name || "Remote Peer"}</p>
+            {peer.cameraTrack?.stream && (
+              <VideoPlayer stream={peer.cameraTrack.stream} />
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // 9. Main App Component
 function App() {
+  // Safe forwarder targeting the global layout stream window directly
+  const chatTools = useChat((emoji) => {
+    if (window._remoteEmoteTrigger) window._remoteEmoteTrigger(emoji);
+  });
+
   return (
     <>
       <section id="center">
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px' }}>
           <JoinRoomButton />
           <ConnectionStatus />
-          <ParticipantsView />
           
-          {/* Mount everything seamlessly right underneath your working video grids */}
-          <InteractivePanel />
+          {/* Video layers and interactive elements render perfectly side-by-side */}
+          <ParticipantsView />
+          <InteractivePanel chatTools={chatTools} />
         </div>
       </section>
       <div className="ticks"></div>
